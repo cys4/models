@@ -19,8 +19,8 @@ from __future__ import print_function
 
 import argparse
 import os
+import sys
 
-import numpy as np
 import tensorflow as tf
 
 parser = argparse.ArgumentParser()
@@ -35,14 +35,27 @@ parser.add_argument('--data_dir', type=str, default='/tmp/mnist_data',
 parser.add_argument('--model_dir', type=str, default='/tmp/mnist_model',
                     help='The directory where the model will be stored.')
 
-parser.add_argument('--steps', type=int, default=20000,
-                    help='Number of steps to train.')
+parser.add_argument('--train_epochs', type=int, default=40,
+                    help='Number of epochs to train.')
+
+parser.add_argument(
+    '--data_format', type=str, default=None,
+    choices=['channels_first', 'channels_last'],
+    help='A flag to override the data format used in the model. channels_first '
+         'provides a performance boost on GPU but is not always compatible '
+         'with CPU. If left unspecified, the data format will be chosen '
+         'automatically based on whether TensorFlow was built for CPU or GPU.')
+
+_NUM_IMAGES = {
+    'train': 50000,
+    'validation': 10000,
+}
 
 
 def input_fn(mode, batch_size=1):
   """A simple input_fn using the contrib.data input pipeline."""
 
-  def parser(serialized_example):
+  def example_parser(serialized_example):
     """Parses a single tf.Example into image and label tensors."""
     features = tf.parse_single_example(
         serialized_example,
@@ -64,8 +77,9 @@ def input_fn(mode, batch_size=1):
     assert mode == tf.estimator.ModeKeys.EVAL, 'invalid mode'
     tfrecords_file = os.path.join(FLAGS.data_dir, 'test.tfrecords')
 
-  assert os.path.exists(tfrecords_file), ('Run convert_to_records.py first to '
-  'convert the MNIST data to TFRecord file format.')
+  assert tf.gfile.Exists(tfrecords_file), (
+      'Run convert_to_records.py first to convert the MNIST data to TFRecord '
+      'file format.')
 
   dataset = tf.contrib.data.TFRecordDataset([tfrecords_file])
 
@@ -73,8 +87,9 @@ def input_fn(mode, batch_size=1):
   if mode == tf.estimator.ModeKeys.TRAIN:
     dataset = dataset.repeat()
 
-  # Map the parser over dataset, and batch results by up to batch_size
-  dataset = dataset.map(parser, num_threads=1, output_buffer_size=batch_size)
+  # Map example_parser over dataset, and batch results by up to batch_size
+  dataset = dataset.map(
+      example_parser, num_threads=1, output_buffer_size=batch_size)
   dataset = dataset.batch(batch_size)
   images, labels = dataset.make_one_shot_iterator().get_next()
 
@@ -87,13 +102,16 @@ def mnist_model(inputs, mode):
   # Reshape X to 4-D tensor: [batch_size, width, height, channels]
   # MNIST images are 28x28 pixels, and have one color channel
   inputs = tf.reshape(inputs, [-1, 28, 28, 1])
-  data_format = 'channels_last'
+  data_format = FLAGS.data_format
 
-  if tf.test.is_built_with_cuda():
+  if data_format is None:
     # When running on GPU, transpose the data from channels_last (NHWC) to
     # channels_first (NCHW) to improve performance.
     # See https://www.tensorflow.org/performance/performance_guide#data_formats
-    data_format = 'channels_first'
+    data_format = ('channels_first' if tf.test.is_built_with_cuda() else
+                   'channels_last')
+
+  if data_format == 'channels_first':
     inputs = tf.transpose(inputs, [0, 3, 1, 2])
 
   # Convolutional Layer #1
@@ -209,9 +227,11 @@ def main(unused_argv):
   logging_hook = tf.train.LoggingTensorHook(
       tensors=tensors_to_log, every_n_iter=100)
 
+  batches_per_epoch = _NUM_IMAGES['train'] / FLAGS.batch_size
+
   mnist_classifier.train(
       input_fn=lambda: input_fn(tf.estimator.ModeKeys.TRAIN, FLAGS.batch_size),
-      steps=FLAGS.steps,
+      steps=FLAGS.train_epochs * batches_per_epoch,
       hooks=[logging_hook])
 
   # Evaluate the model and print results
@@ -223,5 +243,5 @@ def main(unused_argv):
 
 if __name__ == '__main__':
   tf.logging.set_verbosity(tf.logging.INFO)
-  FLAGS = parser.parse_args()
-  tf.app.run()
+  FLAGS, unparsed = parser.parse_known_args()
+  tf.app.run(main=main, argv=[sys.argv[0]] + unparsed)

@@ -17,7 +17,6 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import numpy as np
 import tensorflow as tf
 
 import mnist
@@ -39,6 +38,7 @@ class ClassifierBenchmark(tf.test.Benchmark):
     self.report_benchmark(name="classifier", wall_time=wall_time)
 
 class BaseTest(tf.test.TestCase):
+
   def input_fn(self):
     features = tf.random_uniform([55000, 784])
     labels = tf.random_uniform([55000], maxval=9, dtype=tf.int32)
@@ -78,4 +78,5 @@ class BaseTest(tf.test.TestCase):
 
 
 if __name__ == '__main__':
+  mnist.FLAGS = mnist.parser.parse_args()
   tf.test.main()
